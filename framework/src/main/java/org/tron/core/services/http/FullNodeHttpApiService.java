@@ -289,6 +289,10 @@ public class FullNodeHttpApiService implements Service {
   private GetPendingSizeServlet getPendingSizeServlet;
   @Autowired
   private GetEnergyPricesServlet getEnergyPricesServlet;
+  @Autowired
+  private GetBandwidthPricesServlet getBandwidthPricesServlet;
+  @Autowired
+  private GetBlockServlet getBlockServlet;
 
   private static String getParamsFile(String fileName) {
     InputStream in = Thread.currentThread().getContextClassLoader()
@@ -484,7 +488,6 @@ public class FullNodeHttpApiService implements Service {
       //          "/wallet/createshieldnullifier");
       //      context.addServlet(new ServletHolder(getShieldTransactionHashServlet),
       //      "/wallet/getshieldtransactionhash");
-
       context
           .addServlet(new ServletHolder(isShieldedTRC20ContractNoteSpentServlet),
               "/wallet/isshieldedtrc20contractnotespent");
@@ -535,6 +538,9 @@ public class FullNodeHttpApiService implements Service {
           "/wallet/gettransactionlistfrompending");
       context.addServlet(new ServletHolder(getPendingSizeServlet), "/wallet/getpendingsize");
       context.addServlet(new ServletHolder(getEnergyPricesServlet), "/wallet/getenergyprices");
+      context.addServlet(new ServletHolder(getBandwidthPricesServlet),
+          "/wallet/getbandwidthprices");
+      context.addServlet(new ServletHolder(getBlockServlet), "/wallet/getblock");
 
       int maxHttpConnectNumber = Args.getInstance().getMaxHttpConnectNumber();
       if (maxHttpConnectNumber > 0) {

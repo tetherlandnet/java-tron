@@ -41,7 +41,7 @@ import org.tron.protos.Protocol.Inventory.InventoryType;
 @Slf4j(topic = "net")
 @Component
 public class AdvService {
-  
+
   private final int MAX_INV_TO_FETCH_CACHE_SIZE = 100_000;
   private final int MAX_TRX_CACHE_SIZE = 50_000;
   private final int MAX_BLOCK_CACHE_SIZE = 10;
@@ -50,12 +50,17 @@ public class AdvService {
   @Autowired
   private TronNetDelegate tronNetDelegate;
 
+  @Autowired
+  private FetchBlockService fetchBlockService;
+
   private ConcurrentHashMap<Item, Long> invToFetch = new ConcurrentHashMap<>();
 
   private ConcurrentHashMap<Item, Long> invToSpread = new ConcurrentHashMap<>();
 
+  private long blockCacheTimeout = Args.getInstance().getBlockCacheTimeout();
   private Cache<Item, Long> invToFetchCache = CacheBuilder.newBuilder()
-      .maximumSize(MAX_INV_TO_FETCH_CACHE_SIZE).expireAfterWrite(1, TimeUnit.HOURS)
+      .maximumSize(MAX_INV_TO_FETCH_CACHE_SIZE)
+      .expireAfterWrite(blockCacheTimeout, TimeUnit.MINUTES)
       .recordStats().build();
 
   private Cache<Item, Message> trxCache = CacheBuilder.newBuilder()
@@ -81,7 +86,7 @@ public class AdvService {
       try {
         consumerInvToSpread();
       } catch (Exception exception) {
-        logger.error("Spread thread error. {}", exception.getMessage());
+        logger.error("Spread thread error. {}", exception.getMessage(), exception);
       }
     }, 100, 30, TimeUnit.MILLISECONDS);
 
@@ -89,7 +94,7 @@ public class AdvService {
       try {
         consumerInvToFetch();
       } catch (Exception exception) {
-        logger.error("Fetch thread error. {}", exception.getMessage());
+        logger.error("Fetch thread error. {}", exception.getMessage(), exception);
       }
     }, 100, 30, TimeUnit.MILLISECONDS);
   }
@@ -175,6 +180,10 @@ public class AdvService {
 
   public void broadcast(Message msg) {
 
+    if (fastForward) {
+      return;
+    }
+
     if (invToSpread.size() > MAX_SPREAD_SIZE) {
       logger.warn("Drop message, type: {}, ID: {}.", msg.getType(), msg.getMessageId());
       return;
@@ -193,9 +202,6 @@ public class AdvService {
       });
       blockCache.put(item, msg);
     } else if (msg instanceof TransactionMessage) {
-      if (fastForward) {
-        return;
-      }
       TransactionMessage trxMsg = (TransactionMessage) msg;
       item = new Item(trxMsg.getMessageId(), InventoryType.TRX);
       trxCount.add();
@@ -329,13 +335,19 @@ public class AdvService {
     }
 
     public void add(Item id, PeerConnection peer) {
-      if (send.containsKey(peer) && !send.get(peer).containsKey(id.getType())) {
-        send.get(peer).put(id.getType(), new LinkedList<>());
-      } else if (!send.containsKey(peer)) {
-        send.put(peer, new HashMap<>());
-        send.get(peer).put(id.getType(), new LinkedList<>());
+      HashMap<InventoryType, LinkedList<Sha256Hash>> map = send.get(peer);
+      if (map == null) {
+        map = new HashMap<>();
+        send.put(peer, map);
       }
-      send.get(peer).get(id.getType()).offer(id.getHash());
+
+      LinkedList<Sha256Hash> list = map.get(id.getType());
+      if (list == null) {
+        list = new LinkedList<>();
+        map.put(id.getType(), list);
+      }
+
+      list.offer(id.getHash());
     }
 
     public int getSize(PeerConnection peer) {
@@ -364,6 +376,7 @@ public class AdvService {
         if (key.equals(InventoryType.BLOCK)) {
           value.sort(Comparator.comparingLong(value1 -> new BlockId(value1).getNum()));
           peer.fastSend(new FetchInvDataMessage(value, key));
+          fetchBlockService.fetchBlock(value, peer);
         } else {
           peer.sendMessage(new FetchInvDataMessage(value, key));
         }
